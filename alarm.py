@@ -18,22 +18,8 @@ sys.path.append('/storage/.kodi/addons/script.module.idna/lib/')
 import RPi.GPIO as GPIO
 import requests
 
-from secrets import IP, API_KEY
+from config import *
 
-BUZZER_CTRL_PIN = 2
-BUTTON_CTRL_PIN = 18
-WATER_BOILER_SWITCH = 6
-HUMIDITY_SENSOR = 54
-
-BEEP_MELODY = [1, 1, 1, 1, 2, 2, 1, 1, 1, 1, 4, 1, 1, 1, 1, 4, 1, 1, 1, 1, 2, 2, 1, 1, 1, 1, 4]
-BLOCK_PORTS = [22, 8080]
-SHOWER_TRIGGER = 85  # Humidity in percent
-COFFEE_LEAD_TIME = 180
-TRY_DURATION = 180
-SNOOZE = 180
-SHIT_PAUSE = 300
-WAKE_UP_TRIES = 30
-DEBUG = False
 
 if DEBUG:
     logging.basicConfig(level=logging.DEBUG, stream=sys.stdout, format='%(levelname)s - %(message)s')
