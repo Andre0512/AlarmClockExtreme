@@ -20,14 +20,7 @@ import requests
 
 from config import *
 
-
-if DEBUG:
-    logging.basicConfig(level=logging.DEBUG, stream=sys.stdout, format='%(levelname)s - %(message)s')
-else:
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s',
-                        filename="{}/{}".format(os.path.dirname(os.path.realpath(__file__)), 'alarm.log'))
-logger = logging.getLogger(__name__)
-
+DEBUG = False if len(sys.argv) > 1 and "".join(sys.argv[1:]) == "EXTREME" else True
 
 def setup_gpio():
     GPIO.setmode(GPIO.BCM)
@@ -36,6 +29,7 @@ def setup_gpio():
 
 
 def close_gpio():
+    GPIO.cleanup(BUTTON_CTRL_PIN)
     GPIO.cleanup(BUZZER_CTRL_PIN)
 
 
@@ -53,21 +47,22 @@ def beep(duration, pause):
 def check_button():
     for check in range(TRY_DURATION * 20):
         if not check % 100 and get_humidity() > SHOWER_TRIGGER * 100:
-            logger.info("Stopped beeping after {} seconds because humidity is at {}%".format(str(float(check / 20)), str(
-                float(get_humidity()) / 100)))
+            logger.info("Stopped beeping after {0:.2f} seconds because humidity is at {0:.2f}%".format((check * 0.05),
+                                                                                                       get_humidity() / 100))
             return
         if not GPIO.input(BUTTON_CTRL_PIN):
-            logger.info("Stopped beeping because button was pressed after {} seconds".format(str(float(check / 20))))
+            logger.info("Stopped beeping because button was pressed after {0:.2f} seconds".format(check * 0.05))
             return
-        time.sleep(TRY_DURATION / 20)
-    logger.info("Stopped beeping because no reaction after {} seconds ".format(str(float(check / 20))))
+        time.sleep(0.05)
+    logger.info("Stopped beeping because no reaction after {0:.2f} seconds ".format(check * 0.05))
 
 
-def piep_thread(stop):
-    while True:
+def piep_thread(stop, kill):
+    while not kill.is_set():
         if not stop.is_set():
-            logger.debug("Start playing Melody")
-            for tone in BEEP_MELODY:
+            logger.debug("Start playing melody")
+        for tone in BEEP_MELODY:
+            if not stop.is_set():
                 beep(float(tone) / 4, 0.1)
         time.sleep(2)
 
@@ -80,39 +75,54 @@ def get_humidity():
 
 
 def start_stop_alarm(value):
+    logger.debug("Set waterboiler " + ("ON" if value else "OFF"))
     data = '{{"on": {}}}'.format('true' if value else 'false')
     requests.put("http://{}/api/{}/lights/{}/state".format(IP, API_KEY, WATER_BOILER_SWITCH), data=data)
     for port in BLOCK_PORTS:
+        logger.debug("{} rule for blocking port {}".format("Create" if value else "Delete", port))
         os.system("iptables -{} INPUT -p tcp --dport {} -j REJECT".format('A' if value else 'D', port))
 
 
 def main():
+    logger.info("Start alarm clock in {} mode".format("debug" if DEBUG else "EXTREME"))
     start = timeit.default_timer()
+    t_kill = threading.Event()
     try:
         start_stop_alarm(True)
+        setup_gpio()
         time.sleep(COFFEE_LEAD_TIME)
         t_stop = threading.Event()
-        t = threading.Thread(target=piep_thread, args=(t_stop,))
+        t = threading.Thread(target=piep_thread, args=(t_stop, t_kill))
         t.start()
         stop_timer = WAKE_UP_TRIES
-        while get_humidity() < SHOWER_TRIGGER * 100 and stop_timer:
-            setup_gpio()
+        while get_humidity() < (SHOWER_TRIGGER * 100) and stop_timer:
             t_stop.clear()
+            logger.info("Start beeping")
+            logger.debug("Try round " + str(WAKE_UP_TRIES - stop_timer + 1))
             check_button()
-            close_gpio()
             t_stop.set()
-            time.sleep(SNOOZE if stop_timer < WAKE_UP_TRIES else SNOOZE + SHIT_PAUSE)
-            logger.debug("Try round " + str(WAKE_UP_TRIES - stop_timer))
+            snooze_time = SNOOZE if stop_timer < WAKE_UP_TRIES else SNOOZE + SHIT_PAUSE
+            logger.info("Snooze for {} seconds".format(snooze_time))
+            time.sleep(snooze_time)
             stop_timer = stop_timer - 1
-        if not stop_timer:
+        if not stop_timer + 1:
             logger.info("Stopped because humidity is at {}%".format(get_humidity()))
         else:
             logger.info("Giving up to wake up after {} snoozes".format(WAKE_UP_TRIES))
     finally:
-        close_gpio()
+        t_kill.set()
         start_stop_alarm(False)
-    logger.info("Exit after {} seconds".format(start - timeit.default_timer()))
+        GPIO.output(BUZZER_CTRL_PIN, GPIO.LOW)
+        close_gpio()
+        logger.info("Exit after {0:.3f} seconds".format(timeit.default_timer() - start))
 
 
 if __name__ == "__main__":
+    if DEBUG:
+        logging.basicConfig(level=logging.DEBUG, stream=sys.stdout, format='%(levelname)s - %(message)s')
+    else:
+        logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s',
+                            filename="{}/{}".format(os.path.dirname(os.path.realpath(__file__)), 'alarm.log'))
+    logger = logging.getLogger(__name__)
+
     main()
