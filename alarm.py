@@ -22,6 +22,7 @@ from config import *
 
 DEBUG = False if len(sys.argv) > 1 and "".join(sys.argv[1:]) == "EXTREME" else True
 
+
 def setup_gpio():
     GPIO.setmode(GPIO.BCM)
     GPIO.setup(BUZZER_CTRL_PIN, GPIO.OUT)
@@ -83,11 +84,40 @@ def start_stop_alarm(value):
         os.system("iptables -{} INPUT -p tcp --dport {} -j REJECT".format('A' if value else 'D', port))
 
 
+def kelvin(value):
+    factor = (KELVIN_MAX - KELVIN_MIN) / (CTMAX - CTMIN)
+    if KELVIN_MIN <= value <= KELVIN_MAX:
+        return int(CTMIN + (KELVIN_MAX - value) / factor)
+    raise ValueError
+
+
+def lights_on(kill):
+    i = 0
+    while not kill.is_set() and i < DIMMING_STEPS:
+        temp = kelvin(round(KELVIN_MIN + (MAX_LIGHT_TEMP - KELVIN_MIN) / DIMMING_STEPS * i))
+        data = "{{\"on\":true, \"ct\": {}, \"bri\":{}}}".format(temp, i)
+        for light in LIGHTS_IDS:
+            response = requests.put("http://{}/api/{}/lights/{}/state".format(IP, API_KEY, light), data=data)
+            logger.debug(response.text)
+        time.sleep(DIMM_UP_TIME / DIMMING_STEPS)
+        i += 1
+    if kill.is_set():
+        lights_off()
+
+
+def lights_off():
+    for light in LIGHTS_IDS:
+        response = requests.put("http://{}/api/{}/lights/{}/state".format(IP, API_KEY, light), data="{\"on\":false}")
+        logger.debug(response.text)
+
+
 def main():
     logger.info("Start alarm clock in {} mode".format("debug" if DEBUG else "EXTREME"))
     start = timeit.default_timer()
     t_kill = threading.Event()
     try:
+        threading.Thread(target=lights_on, args=(t_kill,)).start()
+        time.sleep(DIMM_UP_TIME - COFFEE_LEAD_TIME)
         start_stop_alarm(True)
         setup_gpio()
         time.sleep(COFFEE_LEAD_TIME)
@@ -110,6 +140,7 @@ def main():
         else:
             logger.info("Giving up to wake up after {} snoozes".format(WAKE_UP_TRIES))
     finally:
+        lights_off()
         t_kill.set()
         start_stop_alarm(False)
         GPIO.output(BUZZER_CTRL_PIN, GPIO.LOW)
