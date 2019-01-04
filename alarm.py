@@ -36,7 +36,7 @@ def close_gpio():
 
 def beep(duration, pause):
     try:
-        logger.debug("Beeeeeep {} senconds".format(duration))
+        logger.debug("Beeeeeep {} seconds".format(duration))
         GPIO.output(BUZZER_CTRL_PIN, GPIO.HIGH)
         time.sleep(duration)
         GPIO.output(BUZZER_CTRL_PIN, GPIO.LOW)
@@ -48,14 +48,14 @@ def beep(duration, pause):
 def check_button():
     for check in range(TRY_DURATION * 20):
         if not check % 100 and get_humidity() > SHOWER_TRIGGER * 100:
-            logger.info("Stopped beeping after {0:.2f} seconds because humidity is at {0:.2f}%".format((check * 0.05),
-                                                                                                       get_humidity() / 100))
+            logger.info("Stopped beeping after {} because humidity is at {:.2f}%".format(t_format(check * 0.05),
+                                                                                         get_humidity() / 100))
             return
         if not GPIO.input(BUTTON_CTRL_PIN):
-            logger.info("Stopped beeping because button was pressed after {0:.2f} seconds".format(check * 0.05))
+            logger.info("Stopped beeping because button was pressed after {}".format(t_format(check * 0.05)))
             return
         time.sleep(0.05)
-    logger.info("Stopped beeping because no reaction after {0:.2f} seconds ".format(check * 0.05))
+    logger.info("Stopped beeping because no reaction after {} ".format(t_format(check * 0.05)))
 
 
 def piep_thread(stop, kill):
@@ -95,7 +95,7 @@ def lights_on(kill):
     i = 0
     while not kill.is_set() and i < DIMMING_STEPS:
         temp = kelvin(round(KELVIN_MIN + (MAX_LIGHT_TEMP - KELVIN_MIN) / DIMMING_STEPS * i))
-        data = "{{\"on\":true, \"ct\": {}, \"bri\":{}}}".format(temp, i)
+        data = "{{\"on\":true, \"ct\": {}, \"bri\":{}}}".format(temp, MAX_DIMMING_STEPS / DIMMING_STEPS * i)
         for light in LIGHTS_IDS:
             response = requests.put("http://{}/api/{}/lights/{}/state".format(IP, API_KEY, light), data=data)
             logger.debug(response.text)
@@ -109,6 +109,21 @@ def lights_off():
     for light in LIGHTS_IDS:
         response = requests.put("http://{}/api/{}/lights/{}/state".format(IP, API_KEY, light), data="{\"on\":false}")
         logger.debug(response.text)
+
+
+def t_format(value):
+    if value < 60:
+        return "{:.0f} seconds".format(value)
+    else:
+        return "{}:{} minutes".format(*divmod(value, 60))
+
+
+def snooze(snooze_time):
+    logger.info("Snooze for {}".format(t_format(snooze_time)))
+    for i in range(snooze_time / 5):
+        time.sleep(5)
+        if get_humidity() < (SHOWER_TRIGGER * 100):
+            break
 
 
 def main():
@@ -132,20 +147,21 @@ def main():
             check_button()
             t_stop.set()
             snooze_time = SNOOZE if stop_timer < WAKE_UP_TRIES else SNOOZE + SHIT_PAUSE
-            logger.info("Snooze for {} seconds".format(snooze_time))
-            time.sleep(snooze_time)
-            stop_timer = stop_timer - 1
-        if not stop_timer + 1:
-            logger.info("Stopped because humidity is at {}%".format(get_humidity()))
+            snooze(snooze_time)
+            stop_timer -= 1
+        if stop_timer:
+            logger.info("Stopped because humidity is at {:.2f}%".format(float(get_humidity()) / 100))
         else:
             logger.info("Giving up to wake up after {} snoozes".format(WAKE_UP_TRIES))
+    except KeyboardInterrupt:
+        logger.info("Stop caused by user interrupt")
     finally:
         lights_off()
         t_kill.set()
         start_stop_alarm(False)
         GPIO.output(BUZZER_CTRL_PIN, GPIO.LOW)
         close_gpio()
-        logger.info("Exit after {0:.3f} seconds".format(timeit.default_timer() - start))
+        logger.info("Exit after {}".format(t_format(round(timeit.default_timer() - start))))
 
 
 if __name__ == "__main__":
